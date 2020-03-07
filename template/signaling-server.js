@@ -17,7 +17,7 @@ server.listen(PORT, null, function() {
   console.log("Listening on port " + PORT);
 });
 
-main.get('/', function(req, res) { res.sendFile(__dirname + '/client.html'); });
+main.get('/', function(_, res) { res.sendFile(__dirname + '/client.html'); });
 
 
 /*************************/

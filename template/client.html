@@ -1,6 +1,7 @@
 <!doctype html>
 <html>
   <head>
+    <title>rtc template</title>
     <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
     <style>
      html, body {
@@ -31,8 +32,8 @@
     <script src="https://cdn.socket.io/socket.io-1.4.5.js"></script>
     <script>
      /** CONFIG **/
-     var SIGNALING_SERVER = "http://localhost";
-     var DEFAULT_CHANNEL = 'some-global-channel-name';
+     var SIGNALING_SERVER = "http://localhost:3000";
+     var DEFAULT_CHANNEL = 'rtc-template';
      var MUTE_AUDIO_BY_DEFAULT = false;
 
      /** You should probably use a different stun server doing commercial stuff **/
@@ -47,6 +48,7 @@
      var peers = {};
      var peer_media_elements = {};
      var pid = null;
+     let target = $('<input id="target"/>');
      
      function init() {
        signaling_socket = io(SIGNALING_SERVER);
@@ -57,14 +59,12 @@
 
        // connect
        signaling_socket.on('connect', function() {
-	 signaling_socket.emit(
-	   'join', {
-	     "channel": DEFAULT_CHANNEL,
-	     "userdata": {
-	       'whatever-you-want-here': 'stuff'
-	     }
+	 signaling_socket.emit('join', {
+	   "channel": DEFAULT_CHANNEL,
+	   "userdata": {
+	     'whatever-you-want-here': 'stuff'
 	   }
-	 );
+	 });
        });
 
        // disconnect
@@ -83,6 +83,7 @@
        // add peer
        signaling_socket.on('addPeer', function(config) {
          var peer_id = config.peer_id;
+	 console.log('addPeer: ', peer_id);
          if (peer_id in peers) {
            return;
          }
@@ -104,17 +105,27 @@
 	 pc.ondatachannel = function(event) {
 	   var receiveChannel = event.channel;
 	   receiveChannel.onmessage = function(event) {
-	     $('input').val(event.data);
+	     if (event.data === "/empty") {
+	       $('input').val('');
+	     } else {
+	       $('input').val(event.data);
+	     }
              console.log("ondatachannel message:", event.data);
 	   };
 	 };
 
 	 var dc = pc.createDataChannel(DEFAULT_CHANNEL);
-	 let target = $('<input />');
-	 target.attr('id', 'target')
 	 target.on('input', function (e) {
-	   dc.send(e.target.value);
-	   console.log('Sent data: ', e.target.value);
+	   if (dc.readyState === 'open') {
+	     if (e.target.value === '') {
+	       dc.send('/empty');
+	     } else {
+	       dc.send(e.target.value);
+	     }
+	     console.log('Sent data: ', e.target.value);
+	   } else {
+	     console.log(dc)
+	   }
 	 })
 
 	 $('body').append(target); 
