@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+  <head>
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+    <style>
+     html, body {
+       height: 100%;
+       width: 100%;
+       overflow: hidden;
+       background-color: #333; 
+     }
+     input {
+       height: 100%;
+       width: 100%;
+       background: none;
+       color: #eee;
+       font-size: 3rem;
+       font-weight: bold;
+       font-style: italic;
+       border: none;
+       outline-width: 0;
+       text-align: center;
+     }
+     video {
+       width:  320px;
+       height:  240px;
+       border:  1px solid black;
+     }
+    </style>
+
+    <script src="https://cdn.socket.io/socket.io-1.4.5.js"></script>
+    <script>
+     /** CONFIG **/
+     var SIGNALING_SERVER = "http://localhost";
+     var DEFAULT_CHANNEL = 'some-global-channel-name';
+     var MUTE_AUDIO_BY_DEFAULT = false;
+
+     /** You should probably use a different stun server doing commercial stuff **/
+     /** Also see: https://gist.github.com/zziuni/3741933 **/
+     var ICE_SERVERS = [
+       {url:"stun:stun.l.google.com:19302"}
+     ];
+    </script>
+
+    <script>
+     var signaling_socket = null;
+     var peers = {};
+     var peer_media_elements = {};
+     var pid = null;
+     
+     function init() {
+       signaling_socket = io(SIGNALING_SERVER);
+       signaling_socket = io();
+       signaling_socket.on('peerid', function(peer) {
+	 pid = peer.peer_id;
+       });
+
+       // connect
+       signaling_socket.on('connect', function() {
+	 signaling_socket.emit(
+	   'join', {
+	     "channel": DEFAULT_CHANNEL,
+	     "userdata": {
+	       'whatever-you-want-here': 'stuff'
+	     }
+	   }
+	 );
+       });
+
+       // disconnect
+       signaling_socket.on('disconnect', function() {
+         for (peer_id in peer_media_elements) {
+           peer_media_elements[peer_id].remove();
+         }
+         for (peer_id in peers) {
+           peers[peer_id].close();
+         }
+
+         peers = {};
+         peer_media_elements = {};
+       });
+
+       // add peer
+       signaling_socket.on('addPeer', function(config) {
+         var peer_id = config.peer_id;
+         if (peer_id in peers) {
+           return;
+         }
+         var pc = new RTCPeerConnection({"iceServers": ICE_SERVERS});
+         peers[peer_id] = pc;
+
+         pc.onicecandidate = function(event) {
+           if (event.candidate) {
+             signaling_socket.emit('relayICECandidate', {
+               'peer_id': peer_id, 
+               'ice_candidate': {
+                 'sdpMLineIndex': event.candidate.sdpMLineIndex,
+                 'candidate': event.candidate.candidate
+               }
+             });
+           }
+         }
+
+	 pc.ondatachannel = function(event) {
+	   var receiveChannel = event.channel;
+	   receiveChannel.onmessage = function(event) {
+	     $('input').val(event.data);
+             console.log("ondatachannel message:", event.data);
+	   };
+	 };
+
+	 var dc = pc.createDataChannel(DEFAULT_CHANNEL);
+	 let target = $('<input />');
+	 target.attr('id', 'target')
+	 target.on('input', function (e) {
+	   dc.send(e.target.value);
+	   console.log('Sent data: ', e.target.value);
+	 })
+
+	 $('body').append(target); 
+
+	 // create offer
+         if (config.should_create_offer) {
+           pc.createOffer(
+             function (local_description) { 
+               pc.setLocalDescription(local_description,
+                 function() { 
+                   signaling_socket.emit('relaySessionDescription', {
+		     'peer_id': peer_id,
+		     'session_description': local_description
+		   });
+                 },
+                 function() {Alert("Offer setLocalDescription failed!");}
+               );
+             },
+             function (error) {}
+	   );
+         }
+       });
+
+       // session desc
+       signaling_socket.on('sessionDescription', function(config) {
+         var peer_id = config.peer_id;
+         var peer = peers[peer_id];
+         var remote_description = config.session_description;
+         var desc = new RTCSessionDescription(remote_description);
+         var stuff = peer.setRemoteDescription(desc, 
+           function() {
+             if (remote_description.type == "offer") {
+               peer.createAnswer(
+                 function(local_description) {
+                   peer.setLocalDescription(
+		     local_description,
+                     function() { 
+                       signaling_socket.emit('relaySessionDescription', {
+			 'peer_id': peer_id,
+			 'session_description': local_description
+		       });
+                     },
+                     function() { }
+                   );
+                 },
+                 function(error) {});
+             }
+           },
+           function(error) {}
+         );
+       });
+
+       // add iceCandidate
+       signaling_socket.on('iceCandidate', function(config) {
+         var peer = peers[config.peer_id];
+         var ice_candidate = config.ice_candidate;
+         peer.addIceCandidate(new RTCIceCandidate(ice_candidate));
+       });
+
+       // remove peer
+       signaling_socket.on('removePeer', function(config) {
+         var peer_id = config.peer_id;
+         if (peer_id in peer_media_elements) {
+           peer_media_elements[peer_id].remove();
+         }
+         if (peer_id in peers) {
+           peers[peer_id].close();
+         }
+
+         delete peers[peer_id];
+         delete peer_media_elements[config.peer_id];
+       });
+     }
+    </script>
+  </head>
+  <body onload='init()'></body>
+</html>
